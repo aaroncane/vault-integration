@@ -1,0 +1,134 @@
+stages:
+     - preparingStage
+     - stageReady
+
+
+preparingStage:
+    stage: preparingStage
+    image: ruby:3.1.1
+    script:
+    - echo "ETAPA DE GENERAR VAULT -->"
+    - |
+        cat << 'EOF' > generaVault.rb
+          require 'yaml'
+          require 'json'
+          prefix_regex = /^SFP_SECRET_/
+          prefix_regex_uri = /^VAULT_URI_/
+          secrets_list = []
+          puts "#{ARGV[0]}"
+          puts "INICIA RUBY -->"
+
+          # OBTIENE VARIABLES CON PREFIJO SFP_SECRET_
+          data = ENV
+            .select { |k, v| k =~ prefix_regex }
+            .transform_keys { |k| k.sub(prefix_regex, '') }
+            .transform_values { |k| k.sub(prefix_regex, '') }
+
+          # OBTIENE VARIABLES CON PREFIJO VAULT_URI_
+          data_uri = ENV
+            .select { |k, v| k =~ prefix_regex_uri }
+            .transform_keys { |k| k.sub(prefix_regex_uri, '') }
+            .transform_values { |k| k.sub(prefix_regex_uri, '') }
+
+          puts "MEZCLA data Y data_uri -->"
+          data_vault = {}
+          data.each_key do |key|
+            if data_uri.key?(key)
+              data_vault[key] = data_uri[key]
+            end
+          end
+          puts "#{data_vault}"
+
+          data_vault = data_vault.transform_keys { |key| "K8S_SECRET_#{key}" }
+
+
+          puts "MOSTRAR EN SECCION DE VAULT -->"
+          vault_job = {
+            "secrets" => {
+            }
+          }
+          puts "#{vault_job.to_yaml}"
+
+          vault_job['secrets'] = data_vault
+          puts "MOSTRAR EN SECCION DE VAULT   MEZCLA -->"
+          puts "#{vault_job.to_yaml}"
+
+          puts "HASH LIMPIO -->"
+          data_vault.each do |key, value|
+            vault_job["secrets"][key] = {
+              "vault" => value,
+              "file" => false
+              }
+          end
+
+          puts "vault_job"
+          puts "#{vault_job}"
+
+
+          if ENV['VAULT_FLAG']
+            puts "La variable existe"
+            prod_sect = {"include"=>[{"template"=>"Auto-DevOpsBK.gitlab-ci.yml"}], "production"=>{"extends"=>".auto-deploy", "stage"=>"production", "variables"=>{"VAULT_SERVER_URL"=>nil, "VAULT_AUTH_PATH"=>nil, "VAULT_AUTH_ROLE"=>nil, "LABEL"=>"kuma.io/sidecar-injection", "LABEL_VALUE"=>"enabled"}, "id_tokens"=>{"VAULT_ID_TOKEN"=>{"aud"=>"https://gitlabtest.funcionpublica.gob.mx"}}, "secrets"=>{}, "script"=>["auto-deploy check_kube_domain", "auto-deploy download_chart", "auto-deploy use_kube_context || true", "export KUBE_NAMESPACE=$(echo \"$CI_PROJECT_NAME\" | tr '[:upper:]' '[:lower:]' )-$CI_PROJECT_ID-$CI_ENVIRONMENT_SLUG", "auto-deploy ensure_namespace", "auto-deploy initialize_tiller", "auto-deploy create_secret", "auto-deploy deploy", "auto-deploy delete canary", "auto-deploy persist_environment_url"], "environment"=>{"name"=>"production", "url"=>"http://$CI_PROJECT_PATH_SLUG.$KUBE_INGRESS_BASE_DOMAIN"}, "artifacts"=>{"paths"=>["environment_url.txt", "tiller.log"], "when"=>"always"}, "rules"=>[{"if"=>"$CI_DEPLOY_FREEZE", "when"=>"never"}, {"if"=>"($CI_KUBERNETES_ACTIVE == null || $CI_KUBERNETES_ACTIVE == \"\") && ($KUBECONFIG == null || $KUBECONFIG == \"\")", "when"=>"never"}, {"if"=>"$STAGING_ENABLED", "when"=>"never"}, {"if"=>"$CANARY_ENABLED", "when"=>"never"}, {"if"=>"$INCREMENTAL_ROLLOUT_ENABLED", "when"=>"never"}, {"if"=>"$INCREMENTAL_ROLLOUT_MODE", "when"=>"never"}, {"if"=>"$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}]}, "production_manual"=>{"extends"=>".auto-deploy", "stage"=>"production", "variables"=>{"VAULT_SERVER_URL"=>nil, "VAULT_AUTH_PATH"=>nil, "VAULT_AUTH_ROLE"=>nil}, "id_tokens"=>{"VAULT_ID_TOKEN"=>{"aud"=>"https://gitlabtest.funcionpublica.gob.mx"}}, "secrets"=>{}, "script"=>["auto-deploy check_kube_domain", "auto-deploy download_chart", "auto-deploy use_kube_context || true", "export KUBE_NAMESPACE=$(echo \"$CI_PROJECT_NAME\" | tr '[:upper:]' '[:lower:]' )-$CI_PROJECT_ID-$CI_ENVIRONMENT_SLUG", "auto-deploy ensure_namespace", "auto-deploy initialize_tiller", "auto-deploy create_secret", "echo \"INICIA KUMA\"", "echo \"VERIFICANDO SI SE AGREGARA LA ETIQUETA DE KUMA\"", "if [ -z \"${KUMA:-}\" ]; then\n  echo \"La variable KUMA no esta definida. No se realizaran cambios en las etiquetas.\"\nelse\n  echo \"Verificando si la etiqueta $LABEL existe en el namespace $KUBE_NAMESPACE.\"\n  EXISTING_LABEL=$(kubectl get namespace \"$KUBE_NAMESPACE\" --show-labels | grep \"$LABEL\" || true)\n  \n  if [ \"$KUMA\" = \"1\" ]; then\n    if [ -z \"$EXISTING_LABEL\" ]; then\n      echo \"La etiqueta $LABEL no existe en el namespace $KUBE_NAMESPACE.\"\n      echo \"Agregando etiqueta...\"\n      kubectl label namespace \"$KUBE_NAMESPACE\" \"$LABEL=$LABEL_VALUE\" --overwrite\n      CHANGES_MADE=true\n    else\n      echo \"La etiqueta $LABEL ya esta presente en el namespace $KUBE_NAMESPACE.\"\n    fi\n  elif [ \"$KUMA\" = \"2\" ]; then\n    if [ -n \"$EXISTING_LABEL\" ]; then\n      echo \"Eliminando la etiqueta $LABEL del namespace $KUBE_NAMESPACE.\"\n      kubectl label namespace \"$KUBE_NAMESPACE\" \"$LABEL-\" --overwrite\n      CHANGES_MADE=true\n    else\n      echo \"La etiqueta $LABEL no está presente en el namespace $KUBE_NAMESPACE.\"\n      echo \"No se borrará nada.\"\n    fi\n  else\n    echo \"La variable KUMA tiene un valor diferente de 1 o 2. No se realizaran cambios en las etiquetas.\"\n  fi\nfi\n", "echo \"FIN KUMA\"", "auto-deploy deploy", "auto-deploy delete canary", "auto-deploy persist_environment_url"], "environment"=>{"name"=>"production", "url"=>"http://$CI_PROJECT_PATH_SLUG.$KUBE_INGRESS_BASE_DOMAIN"}, "artifacts"=>{"paths"=>["environment_url.txt", "tiller.log"], "when"=>"always"}, "allow_failure"=>false, "rules"=>[{"if"=>"$CI_DEPLOY_FREEZE", "when"=>"never"}, {"if"=>"($CI_KUBERNETES_ACTIVE == null || $CI_KUBERNETES_ACTIVE == \"\") && ($KUBECONFIG == null || $KUBECONFIG == \"\")", "when"=>"never"}, {"if"=>"$INCREMENTAL_ROLLOUT_ENABLED", "when"=>"never"}, {"if"=>"$INCREMENTAL_ROLLOUT_MODE", "when"=>"never"}, {"if"=>"$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $STAGING_ENABLED", "when"=>"manual"}, {"if"=>"$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CANARY_ENABLED", "when"=>"manual"}]}}
+            puts "AGREGAR VAULT_AUTH_ROLE"
+            prod_sect['production_manual']['variables']['VAULT_AUTH_ROLE'] = ENV['VAULT_AUTH_ROLE']
+            prod_sect['production_manual']['variables']['VAULT_SERVER_URL'] = ENV['VAULT_SERVER_URL']
+            prod_sect['production_manual']['variables']['VAULT_AUTH_PATH'] = ENV['VAULT_AUTH_PATH']
+
+
+            # Actualizar el valor de "secrets" en prod_sect
+            puts "#{prod_sect['production_manual']['secrets']}"
+            puts "#{vault_job['secrets']}"
+            prod_sect["production"]["secrets"] = Marshal.load(Marshal.dump(vault_job["secrets"]))
+            prod_sect["production_manual"]["secrets"] = Marshal.load(Marshal.dump(vault_job["secrets"]))
+            puts "DESPUES DE COMBINAR"
+            #puts "#{prod_sect['production']['secrets']}"
+            puts "#{prod_sect['production_manual']['secrets']}"
+            puts "#{vault_job['secrets']}"
+            puts "PRODUCCION FINAL"
+            puts "prod_sect['production']"
+            prod_sect = prod_sect.to_yaml
+            prod_sect = prod_sect.sub(/\A---\s*\n/, '')
+            puts "#{prod_sect}"
+          else
+            puts "La variable no existe"
+            prod_sect ={"include"=>[{"template"=>"Auto-DevOpsBK.gitlab-ci.yml"}]}
+            puts "PRODUCCION FINAL"
+            puts "prod_sect['production']"
+            prod_sect = prod_sect.to_yaml
+            prod_sect = prod_sect.sub(/\A---\s*\n/, '')
+            puts "#{prod_sect}"
+          end
+
+          File.open(ARGV[0], 'w') { |file| file.write(prod_sect) }
+
+        EOF
+    - echo $K8S_SECRET_hostv
+    - ruby generaVault.rb produccion.yml
+    - echo "cat desde script"
+    - cat produccion.yml
+
+
+    artifacts:
+      paths:
+      - produccion.yml
+      expire_in: 20min
+
+
+
+stageReady:
+    stage: stageReady
+    script:
+      - echo "etapaLista"
+
+dynamic-stage:
+    stage: stageReady
+    needs:
+      - job: preparingStage
+        optional: true
+    trigger:
+      include:
+        - artifact: produccion.yml
+          job: preparingStage
+      strategy: depend
+    #rules:
+    #- if: $VAULT_FLAG != null
+    #when: manual
